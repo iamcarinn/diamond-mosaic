@@ -6,52 +6,77 @@ import (
 	"image/draw"
 	"io"
 	"log"
-
 	"diamond-mosaic/internal/db"
-
 	"github.com/disintegration/imaging"
 	"github.com/lucasb-eyer/go-colorful"
 )
 
-// Process обрабатывает изображение и возвращает мозаичное изображение.
-func Process(file io.Reader, palette []db.PaletteColor) (image.Image, error) {
-	// 1. Декодируем изображение (ожидается PNG)
-	src, err := imaging.Decode(file)
-	if err != nil {
-		return nil, err
-	}
 
-	// 2. Применяем медианный фильтр для удаления шумов
-	filtered := MedianFilter(src, 3)
 
-	// 3. Масштабируем изображение до заданного числа ячеек (например, 100x100)
-	gridW, gridH := 100, 100
-	resized := imaging.Resize(filtered, gridW, gridH, imaging.CatmullRom)
-
-	// 4. Создаём итоговое изображение
-	cellSize := 10
-	mosaic := image.NewRGBA(image.Rect(0, 0, gridW*cellSize, gridH*cellSize))
-
-	// 5. Для каждой ячейки подбираем ближайший цвет из палитры
-	for y := 0; y < gridH; y++ {
-		for x := 0; x < gridW; x++ {
-			r, g, b, _ := resized.At(x, y).RGBA()
-			// Приводим из диапазона 0-65535 в 0-1
-			pixelColor := colorful.Color{
-				R: float64(r) / 65535.0,
-				G: float64(g) / 65535.0,
-				B: float64(b) / 65535.0,
-			}
-			nearest := findNearestColor(pixelColor, palette)
-			nr, ng, nb := nearest.Color.RGB255()
-			rect := image.Rect(x*cellSize, y*cellSize, (x+1)*cellSize, (y+1)*cellSize)
-			draw.Draw(mosaic, rect, &image.Uniform{C: color.RGBA{R: nr, G: ng, B: nb, A: 255}}, image.Point{}, draw.Src)
-		}
-	}
-
-	log.Println("Мозаичная схема успешно сгенерирована")
-	return mosaic, nil
+// ColorUsage связывает цвет из палитры с количеством пикселей (алмазов).
+type ColorUsage struct {
+    PaletteColor db.PaletteColor
+    Count        int
 }
+
+// Process декодирует входное изображение, превращает его в мозаичный рисунок
+// и собирает список уникальных DMC-цветов с их количеством использования.
+func Process(file io.Reader, palette []db.PaletteColor) (image.Image, []ColorUsage, error) {
+    // 1. Декодируем
+    src, err := imaging.Decode(file)
+    if err != nil {
+        return nil, nil, err
+    }
+
+    // 2. Фильтр
+    filtered := MedianFilter(src, 3)
+
+    // 3. В сетку 100×100
+    const gridW, gridH = 100, 100
+    resized := imaging.Resize(filtered, gridW, gridH, imaging.CatmullRom)
+
+    // 4. Подготовка холста
+    const cellSize = 10
+    mosaic := image.NewRGBA(image.Rect(0, 0, gridW*cellSize, gridH*cellSize))
+
+    // 5. Собираем в map для подсчёта
+    usageMap := make(map[string]ColorUsage, len(palette))
+
+    for y := 0; y < gridH; y++ {
+        for x := 0; x < gridW; x++ {
+            r, g, b, _ := resized.At(x, y).RGBA()
+            pix := colorful.Color{
+                R: float64(r) / 65535.0,
+                G: float64(g) / 65535.0,
+                B: float64(b) / 65535.0,
+            }
+            nearest := findNearestColor(pix, palette)
+
+            // увеличиваем счётчик
+            u := usageMap[nearest.DMCCode]
+            if u.PaletteColor.DMCCode == "" {
+                u.PaletteColor = nearest
+            }
+            u.Count++
+            usageMap[nearest.DMCCode] = u
+
+            // рисуем клетку
+            nr, ng, nb := nearest.Color.RGB255()
+            rect := image.Rect(x*cellSize, y*cellSize, (x+1)*cellSize, (y+1)*cellSize)
+            draw.Draw(mosaic, rect, &image.Uniform{C: color.RGBA{R: nr, G: ng, B: nb, A: 255}}, image.Point{}, draw.Src)
+        }
+    }
+
+    // 6. Переносим в срез
+    usages := make([]ColorUsage, 0, len(usageMap))
+    for _, u := range usageMap {
+        usages = append(usages, u)
+    }
+
+    log.Printf("Найдено уникальных цветов: %d", len(usages))
+    return mosaic, usages, nil
+}
+
 
 // findNearestColor ищет ближайший цвет в палитре по евклидову дистанции в Lab.
 func findNearestColor(c colorful.Color, palette []db.PaletteColor) db.PaletteColor {
