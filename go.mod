@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/disintegration/imaging v1.6.2
+	github.com/jung-kurt/gofpdf v1.16.0
 	github.com/lib/pq v1.10.9
 	github.com/lucasb-eyer/go-colorful v1.2.0
 )
