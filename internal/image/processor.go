@@ -18,19 +18,19 @@ import (
 
 // Символы для легенды
 var allSymbols = []string{
-	"A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z",
-	"a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z",
-	"0","1","2","3","4","5","6","7","8","9",
-	"!","@","#","$","%","^","&","*","(",")","-","_","+","=","~","`",
-	"[","]","{","}","<",">","?","/","\\","|",".",",",":",";","'","\"",
-	// "Ж","З","И","Й","Л","П","Ф","Ц","Ч","Ш","Щ","Э","Ю","Я",
-	// "ж","з","и","й","л","п","ф","ц","ч","ш","щ","э","ю","я",
+	"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+	"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+	"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+	"!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "-", "_", "+", "=", "~", "`",
+	"[", "]", "{", "}", "<", ">", "?", "/", "\\", "|", ".", ",", ":", ";", "'", "\"",
+	// "Ж", "З", "И", "Й", "Л", "П", "Ф", "Ц", "Ч", "Ш", "Щ", "Э", "Ю", "Я",
+	// "ж", "з", "и", "й", "л", "п", "ф", "ц", "ч", "ш", "щ", "э", "ю", "я",
 }
 
-	// // Присваиваем символы только используемым цветам
-	// for i := 0; i < len(usages) && i < len(allSymbols); i++ {
-	// 	usages[i].PaletteColor.Symbol = allSymbols[i]
-	// }
+// // Присваиваем символы только используемым цветам
+// for i := 0; i < len(usages) && i < len(allSymbols); i++ {
+// 	usages[i].PaletteColor.Symbol = allSymbols[i]
+// }
 
 // ColorUsage связывает цвет из палитры с количеством пикселей (алмазов).
 type ColorUsage struct {
@@ -40,7 +40,7 @@ type ColorUsage struct {
 
 // Process декодирует входное изображение, превращает его в мозаичный рисунок
 // и собирает список уникальных DMC-цветов с их количеством использования.
-func Process(file io.Reader, palette []db.PaletteColor) (image.Image, []ColorUsage, error) {
+func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm int) (image.Image, []ColorUsage, error) {
 	// 1. Декодируем
 	src, err := imaging.Decode(file)
 	if err != nil {
@@ -50,8 +50,17 @@ func Process(file io.Reader, palette []db.PaletteColor) (image.Image, []ColorUsa
 	// 2. Фильтр
 	filtered := MedianFilter(src, 3)
 
+	// Переводим см в мм
+	widthMm := float64(widthCm) * 10.0
+	heightMm := float64(heightCm) * 10.0
+
+	strazMm := 2.5 // или бери из интерфейса, если вдруг меняется
+
+	gridW := int(widthMm / strazMm)
+	gridH := int(heightMm / strazMm)
+
 	// 3. Масштабирование
-	const gridW, gridH = 100, 100 // TODO: возможность выбора
+	//const gridW, gridH = 50, 50 // TODO: возможность выбора
 	resized := imaging.Resize(filtered, gridW, gridH, imaging.CatmullRom)
 
 	// 4. Подбор ближайших цветов
@@ -238,25 +247,25 @@ func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize i
 }
 
 func AssignSymbolsToMatched(matched [][]db.PaletteColor, allSymbols []string) {
-    symbolMap := map[string]string{} // DMC -> символ
-    symbolIdx := 0
-    for y := 0; y < len(matched); y++ {
-        for x := 0; x < len(matched[0]); x++ {
-            pc := &matched[y][x]
-            if pc.Symbol != "" {
-                continue
-            }
-            if sym, ok := symbolMap[pc.DMCCode]; ok {
-                pc.Symbol = sym
-            } else {
-                if symbolIdx < len(allSymbols) {
-                    pc.Symbol = allSymbols[symbolIdx]
-                    symbolMap[pc.DMCCode] = allSymbols[symbolIdx]
-                    symbolIdx++
-                } else {
-                    pc.Symbol = "?" // если символы закончились
-                }
-            }
-        }
-    }
+	symbolMap := map[string]string{} // DMC -> символ
+	symbolIdx := 0
+	for y := 0; y < len(matched); y++ {
+		for x := 0; x < len(matched[0]); x++ {
+			pc := &matched[y][x]
+			if pc.Symbol != "" {
+				continue
+			}
+			if sym, ok := symbolMap[pc.DMCCode]; ok {
+				pc.Symbol = sym
+			} else {
+				if symbolIdx < len(allSymbols) {
+					pc.Symbol = allSymbols[symbolIdx]
+					symbolMap[pc.DMCCode] = allSymbols[symbolIdx]
+					symbolIdx++
+				} else {
+					pc.Symbol = "?" // если символы закончились
+				}
+			}
+		}
+	}
 }
