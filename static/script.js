@@ -35,7 +35,7 @@ document.getElementById("uploadForm").addEventListener("submit", async function 
 
     const a = document.createElement("a");
     a.href = url;
-    a.download = "mosaic.png";
+    a.download = "mosaic.pdf";
     a.click();
     window.URL.revokeObjectURL(url);
 

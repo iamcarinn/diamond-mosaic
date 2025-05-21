@@ -5,7 +5,6 @@ import (
 	"image/color"
 	"image/draw"
 	"io"
-	"log"
 	"diamond-mosaic/internal/db"
 	"github.com/disintegration/imaging"
 	"github.com/lucasb-eyer/go-colorful"
@@ -31,18 +30,25 @@ func Process(file io.Reader, palette []db.PaletteColor) (image.Image, []ColorUsa
     // 2. Фильтр
     filtered := MedianFilter(src, 3)
 
-    // 3. В сетку 100×100
-    const gridW, gridH = 100, 100
+    // 3. Масштабирование
+    const gridW, gridH = 100, 100 // TODO: возможность выбора
     resized := imaging.Resize(filtered, gridW, gridH, imaging.CatmullRom)
 
-    // 4. Подготовка холста
+    // 4. Подбор ближайших цветов
+    matched := MatchToPalette(resized, palette, gridW, gridH)
+
+    // 5. Построение растрового холста и подсчёт цветов
     const cellSize = 10
-    mosaic := image.NewRGBA(image.Rect(0, 0, gridW*cellSize, gridH*cellSize))
+    mosaic, usages := RenderMosaic(matched, cellSize)
 
-    // 5. Собираем в map для подсчёта
-    usageMap := make(map[string]ColorUsage, len(palette))
+    return mosaic, usages, nil
+}
 
+// MatchToPalette строит матрицу подобранных цветов (gridW×gridH) на основе палитры.
+func MatchToPalette(resized image.Image, palette []db.PaletteColor, gridW, gridH int) [][]db.PaletteColor {
+    matched := make([][]db.PaletteColor, gridH)
     for y := 0; y < gridH; y++ {
+        matched[y] = make([]db.PaletteColor, gridW)
         for x := 0; x < gridW; x++ {
             r, g, b, _ := resized.At(x, y).RGBA()
             pix := colorful.Color{
@@ -50,33 +56,11 @@ func Process(file io.Reader, palette []db.PaletteColor) (image.Image, []ColorUsa
                 G: float64(g) / 65535.0,
                 B: float64(b) / 65535.0,
             }
-            nearest := findNearestColor(pix, palette)
-
-            // увеличиваем счётчик
-            u := usageMap[nearest.DMCCode]
-            if u.PaletteColor.DMCCode == "" {
-                u.PaletteColor = nearest
-            }
-            u.Count++
-            usageMap[nearest.DMCCode] = u
-
-            // рисуем клетку
-            nr, ng, nb := nearest.Color.RGB255()
-            rect := image.Rect(x*cellSize, y*cellSize, (x+1)*cellSize, (y+1)*cellSize)
-            draw.Draw(mosaic, rect, &image.Uniform{C: color.RGBA{R: nr, G: ng, B: nb, A: 255}}, image.Point{}, draw.Src)
+            matched[y][x] = findNearestColor(pix, palette)
         }
     }
-
-    // 6. Переносим в срез
-    usages := make([]ColorUsage, 0, len(usageMap))
-    for _, u := range usageMap {
-        usages = append(usages, u)
-    }
-
-    log.Printf("Найдено уникальных цветов: %d", len(usages))
-    return mosaic, usages, nil
+    return matched
 }
-
 
 // findNearestColor ищет ближайший цвет в палитре по евклидову дистанции в Lab.
 func findNearestColor(c colorful.Color, palette []db.PaletteColor) db.PaletteColor {
@@ -102,6 +86,36 @@ func euclideanDistanceLab(lab1, lab2 [3]float64) float64 {
 	db := lab1[2] - lab2[2]
 	return dL*dL + da*da + db*db
 }
+
+// RenderMosaic строит итоговое изображение и подсчитывает количество элементов каждого цвета.
+func RenderMosaic(matched [][]db.PaletteColor, cellSize int) (image.Image, []ColorUsage) {
+    h := len(matched)
+    w := len(matched[0])
+    mosaic := image.NewRGBA(image.Rect(0, 0, w*cellSize, h*cellSize))
+    usageMap := make(map[string]ColorUsage)
+    for y := 0; y < h; y++ {
+        for x := 0; x < w; x++ {
+            pc := matched[y][x]
+            u := usageMap[pc.DMCCode]
+            if u.PaletteColor.DMCCode == "" {
+                u.PaletteColor = pc
+            }
+            u.Count++
+            usageMap[pc.DMCCode] = u
+
+            nr, ng, nb := pc.Color.RGB255()
+            rect := image.Rect(x*cellSize, y*cellSize, (x+1)*cellSize, (y+1)*cellSize)
+            draw.Draw(mosaic, rect, &image.Uniform{C: color.RGBA{R: nr, G: ng, B: nb, A: 255}}, image.Point{}, draw.Src)
+        }
+    }
+    // В срез
+    usages := make([]ColorUsage, 0, len(usageMap))
+    for _, u := range usageMap {
+        usages = append(usages, u)
+    }
+    return mosaic, usages
+}
+
 
 // MedianFilter применяет медианный фильтр к изображению с ядром kernelSize (должно быть нечётным).
 func MedianFilter(img image.Image, kernelSize int) image.Image {
