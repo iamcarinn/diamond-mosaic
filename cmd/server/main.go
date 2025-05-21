@@ -29,6 +29,8 @@ func main() {
 
 	// Обработчик генерации схемы
 	http.HandleFunc("/generate", handlers.GenerateHandler)
+	// Раздаём всё из static по адресу /static/
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
 	log.Println("Сервер запущен на http://localhost:8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {

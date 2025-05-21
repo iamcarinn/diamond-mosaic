@@ -39,7 +39,7 @@ document.getElementById("uploadForm").addEventListener("submit", async function 
     a.click();
     window.URL.revokeObjectURL(url);
 
-    status.textContent = "Готово! PNG-файл скачан.";
+    status.textContent = "Готово! PDF-файл скачан.";
   } catch (err) {
     console.error(err);
     status.textContent = "Произошла ошибка при генерации схемы.";
