@@ -13,6 +13,7 @@ type PaletteColor struct {
 	DMCCode string
 	Name    string
 	Color   colorful.Color
+	Symbol  string
 }
 
 // LoadPalette подключается к БД и загружает данные из таблицы palette.
