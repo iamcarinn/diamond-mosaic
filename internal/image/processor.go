@@ -25,8 +25,6 @@ var allSymbols = []string{
 	"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
 	"!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "-", "_", "+", "=", "~", "`",
 	"[", "]", "{", "}", "<", ">", "?", "/", "\\", "|", ".", ",", ":", ";", "'", "\"",
-	// "Ж", "З", "И", "Й", "Л", "П", "Ф", "Ц", "Ч", "Ш", "Щ", "Э", "Ю", "Я",
-	// "ж", "з", "и", "й", "л", "п", "ф", "ц", "ч", "ш", "щ", "э", "ю", "я",
 }
 
 // // Присваиваем символы только используемым цветам
@@ -179,6 +177,8 @@ func RenderMosaic(matched [][]db.PaletteColor, cellSize int) (image.Image, []Col
 				nr, ng, nb := pc.Color.RGB255()
 				rect := image.Rect(x*cellSize, y*cellSize, (x+1)*cellSize, (y+1)*cellSize)
 				draw.Draw(mosaic, rect, &image.Uniform{C: color.RGBA{R: nr, G: ng, B: nb, A: 255}}, image.Point{}, draw.Src)
+				//drawBorder(mosaic, rect, color.Black)
+				//drawBorder(mosaic, rect, color.RGBA{R: 90, G: 90, B: 90, A: 255})
 			}
 		}(y)
 
@@ -339,26 +339,6 @@ func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize i
 			}
 		}
 	}
-	// c.SetSrc(image.Black) // цвет текста: чёрный
-
-	// for y := 0; y < len(matched); y++ {
-	// 	for x := 0; x < len(matched[0]); x++ {
-	// 		sym := matched[y][x].Symbol
-	// 		if sym == "" {
-	// 			continue // если не присвоено, пропускаем
-	// 		}
-	// 		// координаты центра клетки
-	// 		pt := freetype.Pt(
-	// 			x*cellSize+cellSize/4,   // x
-	// 			y*cellSize+cellSize*3/4, // y
-	// 		)
-	// 		_, err := c.DrawString(sym, pt)
-	// 		if err != nil {
-	// 			log.Printf("ошибка рисования символа %q: %v", sym, err)
-	// 		}
-	// 		// log.Printf("(%d,%d): %q", x, y, sym)
-	// 	}
-	// }
 
 	return nil
 }
@@ -394,5 +374,20 @@ func AssignSymbolsToMatched(matched [][]db.PaletteColor, allSymbols []string) {
 				}
 			}
 		}
+	}
+}
+
+func drawBorder(img *image.RGBA, rect image.Rectangle, c color.Color) {
+	minX, minY, maxX, maxY := rect.Min.X, rect.Min.Y, rect.Max.X, rect.Max.Y
+
+	// Горизонтальные линии
+	for x := minX; x < maxX; x++ {
+		img.Set(x, minY, c)   // верхняя
+		img.Set(x, maxY-1, c) // нижняя
+	}
+	// Вертикальные линии
+	for y := minY; y < maxY; y++ {
+		img.Set(minX, y, c)   // левая
+		img.Set(maxX-1, y, c) // правая
 	}
 }
