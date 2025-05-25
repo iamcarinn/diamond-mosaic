@@ -8,6 +8,8 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"sync"
+	"time"
 
 	// "golang.org/x/image/font"
 
@@ -47,9 +49,6 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 		return nil, nil, err
 	}
 
-	// 2. Фильтр
-	filtered := MedianFilter(src, 3)
-
 	// Переводим см в мм
 	widthMm := float64(widthCm) * 10.0
 	heightMm := float64(heightCm) * 10.0
@@ -59,16 +58,26 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 	gridW := int(widthMm / strazMm)
 	gridH := int(heightMm / strazMm)
 
-	// 3. Масштабирование
+	// 2. Масштабирование
 	//const gridW, gridH = 50, 50 // TODO: возможность выбора
-	resized := imaging.Resize(filtered, gridW, gridH, imaging.CatmullRom)
+	resized := imaging.Resize(src, gridW, gridH, imaging.CatmullRom)
+
+	// 3. Фильтр
+	filtered := MedianFilter(resized, 3)
 
 	// 4. Подбор ближайших цветов
-	matched := MatchToPalette(resized, palette, gridW, gridH)
+	matched := MatchToPalette(filtered, palette, gridW, gridH)
 	AssignSymbolsToMatched(matched, allSymbols)
 
 	// 5. Построение растрового холста и подсчёт цветов
 	const cellSize = 10
+	//mosaic, usages := RenderMosaic(matched, cellSize)
+	// Удаляем редкие цвета:
+
+	_, usages := RenderMosaic(matched, cellSize)
+	// Удаляем редкие цвета:
+	RemoveRareColors(matched, usages, 30) // 15 — минимальное количество страз
+	// Повторно пересчитываем usages и картинку:
 	mosaic, usages := RenderMosaic(matched, cellSize)
 
 	rgbaImg, ok := mosaic.(*image.RGBA)
@@ -91,19 +100,30 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 
 // MatchToPalette строит матрицу подобранных цветов (gridW×gridH) на основе палитры.
 func MatchToPalette(resized image.Image, palette []db.PaletteColor, gridW, gridH int) [][]db.PaletteColor {
+	start := time.Now() // замер времени выполнения
+
 	matched := make([][]db.PaletteColor, gridH)
+	var wg sync.WaitGroup
+
 	for y := 0; y < gridH; y++ {
 		matched[y] = make([]db.PaletteColor, gridW)
-		for x := 0; x < gridW; x++ {
-			r, g, b, _ := resized.At(x, y).RGBA()
-			pix := colorful.Color{
-				R: float64(r) / 65535.0,
-				G: float64(g) / 65535.0,
-				B: float64(b) / 65535.0,
+		wg.Add(1)
+		go func(y int) {
+			defer wg.Done()
+			for x := 0; x < gridW; x++ {
+				r, g, b, _ := resized.At(x, y).RGBA()
+				pix := colorful.Color{
+					R: float64(r) / 65535.0,
+					G: float64(g) / 65535.0,
+					B: float64(b) / 65535.0,
+				}
+				matched[y][x] = findNearestColor(pix, palette)
 			}
-			matched[y][x] = findNearestColor(pix, palette)
-		}
+		}(y)
 	}
+	wg.Wait()
+	elapsed := time.Since(start)
+	log.Printf("[MatchToPalette] Время выполнения: %s", elapsed)
 	return matched
 }
 
@@ -134,61 +154,133 @@ func euclideanDistanceLab(lab1, lab2 [3]float64) float64 {
 
 // RenderMosaic строит итоговое изображение и подсчитывает количество элементов каждого цвета.
 func RenderMosaic(matched [][]db.PaletteColor, cellSize int) (image.Image, []ColorUsage) {
+	start := time.Now()
+
 	h := len(matched)
 	w := len(matched[0])
 	mosaic := image.NewRGBA(image.Rect(0, 0, w*cellSize, h*cellSize))
 	usageMap := make(map[string]ColorUsage)
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			pc := matched[y][x]
-			u := usageMap[pc.DMCCode]
-			if u.PaletteColor.DMCCode == "" {
-				u.PaletteColor = pc
-			}
-			u.Count++
-			usageMap[pc.DMCCode] = u
 
-			nr, ng, nb := pc.Color.RGB255()
-			rect := image.Rect(x*cellSize, y*cellSize, (x+1)*cellSize, (y+1)*cellSize)
-			draw.Draw(mosaic, rect, &image.Uniform{C: color.RGBA{R: nr, G: ng, B: nb, A: 255}}, image.Point{}, draw.Src)
-		}
+	var wg sync.WaitGroup
+
+	for y := 0; y < h; y++ {
+		wg.Add(1)
+		go func(y int) {
+			defer wg.Done()
+			for x := 0; x < w; x++ {
+				pc := matched[y][x]
+				u := usageMap[pc.DMCCode]
+				if u.PaletteColor.DMCCode == "" {
+					u.PaletteColor = pc
+				}
+				u.Count++
+				usageMap[pc.DMCCode] = u
+
+				nr, ng, nb := pc.Color.RGB255()
+				rect := image.Rect(x*cellSize, y*cellSize, (x+1)*cellSize, (y+1)*cellSize)
+				draw.Draw(mosaic, rect, &image.Uniform{C: color.RGBA{R: nr, G: ng, B: nb, A: 255}}, image.Point{}, draw.Src)
+			}
+		}(y)
+
+		wg.Wait()
 	}
 	// В срез
 	usages := make([]ColorUsage, 0, len(usageMap))
 	for _, u := range usageMap {
 		usages = append(usages, u)
 	}
+	elapsed := time.Since(start)
+	log.Printf("[RenderMosaic] Время выполнения: %s", elapsed)
+
 	return mosaic, usages
+}
+
+// Функция: заменить редкие цвета на ближайший частый
+func RemoveRareColors(matched [][]db.PaletteColor, usages []ColorUsage, minCount int) {
+	// Собрать частые и редкие цвета
+	majorColors := map[string]db.PaletteColor{}
+	minorColors := map[string]db.PaletteColor{}
+	for _, u := range usages {
+		if u.Count >= minCount {
+			majorColors[u.PaletteColor.DMCCode] = u.PaletteColor
+		} else {
+			minorColors[u.PaletteColor.DMCCode] = u.PaletteColor
+		}
+	}
+	if len(majorColors) == 0 {
+		// Если вдруг нет частых цветов, просто ничего не делаем
+		return
+	}
+	// Функция поиска ближайшего основного цвета
+	findNearestMajor := func(c colorful.Color) db.PaletteColor {
+		l1, a1, b1 := c.Lab()
+		minDist := 1e9
+		var nearest db.PaletteColor
+		for _, pc := range majorColors {
+			l2, a2, b2 := pc.Color.Lab()
+			dl := l1 - l2
+			da := a1 - a2
+			db_ := b1 - b2
+			dist := dl*dl + da*da + db_*db_
+			if dist < minDist {
+				minDist = dist
+				nearest = pc
+			}
+		}
+		return nearest
+	}
+
+	// Заменить все пиксели с "редкими" цветами на ближайший частый
+	for y := 0; y < len(matched); y++ {
+		for x := 0; x < len(matched[0]); x++ {
+			pc := matched[y][x]
+			if _, isMinor := minorColors[pc.DMCCode]; isMinor {
+				matched[y][x] = findNearestMajor(pc.Color)
+			}
+		}
+	}
 }
 
 // MedianFilter применяет медианный фильтр к изображению с ядром kernelSize (должно быть нечётным).
 func MedianFilter(img image.Image, kernelSize int) image.Image {
+	start := time.Now() // замер времени выполнения
+	var wg sync.WaitGroup
+
 	bounds := img.Bounds()
 	filtered := image.NewRGBA(bounds)
 	offset := kernelSize / 2
 
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			var rs, gs, bs []uint8
-			for ky := -offset; ky <= offset; ky++ {
-				for kx := -offset; kx <= offset; kx++ {
-					nx := x + kx
-					ny := y + ky
-					if nx < bounds.Min.X || nx >= bounds.Max.X || ny < bounds.Min.Y || ny >= bounds.Max.Y {
-						continue
+		wg.Add(1)
+		go func(y int) {
+			defer wg.Done()
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				var rs, gs, bs []uint8
+				for ky := -offset; ky <= offset; ky++ {
+					for kx := -offset; kx <= offset; kx++ {
+						nx := x + kx
+						ny := y + ky
+						if nx < bounds.Min.X || nx >= bounds.Max.X || ny < bounds.Min.Y || ny >= bounds.Max.Y {
+							continue
+						}
+						r, g, b, _ := img.At(nx, ny).RGBA()
+						rs = append(rs, uint8(r>>8))
+						gs = append(gs, uint8(g>>8))
+						bs = append(bs, uint8(b>>8))
 					}
-					r, g, b, _ := img.At(nx, ny).RGBA()
-					rs = append(rs, uint8(r>>8))
-					gs = append(gs, uint8(g>>8))
-					bs = append(bs, uint8(b>>8))
 				}
+				medR := median(rs)
+				medG := median(gs)
+				medB := median(bs)
+				filtered.Set(x, y, color.RGBA{R: medR, G: medG, B: medB, A: 255})
 			}
-			medR := median(rs)
-			medG := median(gs)
-			medB := median(bs)
-			filtered.Set(x, y, color.RGBA{R: medR, G: medG, B: medB, A: 255})
-		}
+		}(y)
 	}
+
+	wg.Wait()
+	elapsed := time.Since(start)
+	log.Printf("[MedianFilter] Время выполнения: %s", elapsed)
+
 	return filtered
 }
 
@@ -222,7 +314,8 @@ func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize i
 	c.SetFontSize(float64(cellSize) * 0.7) // размер символа чуть меньше клетки
 	c.SetClip(img.Bounds())
 	c.SetDst(img)
-	c.SetSrc(image.Black) // цвет текста: чёрный
+
+	const brightnessThreshold = 0.5 // Порог, подбирай по вкусу
 
 	for y := 0; y < len(matched); y++ {
 		for x := 0; x < len(matched[0]); x++ {
@@ -230,6 +323,11 @@ func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize i
 			if sym == "" {
 				continue // если не присвоено, пропускаем
 			}
+
+			// Определяем цвет символа для клетки
+			col := matched[y][x].Color
+			c.SetSrc(chooseSymbolColor(col, brightnessThreshold))
+
 			// координаты центра клетки
 			pt := freetype.Pt(
 				x*cellSize+cellSize/4,   // x
@@ -239,11 +337,40 @@ func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize i
 			if err != nil {
 				log.Printf("ошибка рисования символа %q: %v", sym, err)
 			}
-			// log.Printf("(%d,%d): %q", x, y, sym)
-
 		}
 	}
+	// c.SetSrc(image.Black) // цвет текста: чёрный
+
+	// for y := 0; y < len(matched); y++ {
+	// 	for x := 0; x < len(matched[0]); x++ {
+	// 		sym := matched[y][x].Symbol
+	// 		if sym == "" {
+	// 			continue // если не присвоено, пропускаем
+	// 		}
+	// 		// координаты центра клетки
+	// 		pt := freetype.Pt(
+	// 			x*cellSize+cellSize/4,   // x
+	// 			y*cellSize+cellSize*3/4, // y
+	// 		)
+	// 		_, err := c.DrawString(sym, pt)
+	// 		if err != nil {
+	// 			log.Printf("ошибка рисования символа %q: %v", sym, err)
+	// 		}
+	// 		// log.Printf("(%d,%d): %q", x, y, sym)
+	// 	}
+	// }
+
 	return nil
+}
+
+// Функция определяет, какой цвет текста выбрать (черный или белый)
+// col — цвет фона, threshold — порог яркости (обычно 70)
+func chooseSymbolColor(col colorful.Color, threshold float64) image.Image {
+	l, _, _ := col.Lab()
+	if l > threshold {
+		return image.Black // ← image.Black, а не color.Black
+	}
+	return image.White
 }
 
 func AssignSymbolsToMatched(matched [][]db.PaletteColor, allSymbols []string) {

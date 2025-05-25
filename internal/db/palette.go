@@ -53,3 +53,28 @@ func LoadPalette(connStr string) ([]PaletteColor, error) {
 	}
 	return palette, nil
 }
+
+// FilterPalette — оставить только "достаточно разные" цвета
+func FilterPalette(palette []PaletteColor, minDist float64) []PaletteColor {
+    var filtered []PaletteColor
+
+    for _, pc := range palette {
+        tooClose := false
+        l1, a1, b1 := pc.Color.Lab()
+        for _, fpc := range filtered {
+            l2, a2, b2 := fpc.Color.Lab()
+            dl := l1 - l2
+            da := a1 - a2
+            db_ := b1 - b2
+            dist := dl*dl + da*da + db_*db_
+            if dist < minDist*minDist {
+                tooClose = true
+                break
+            }
+        }
+        if !tooClose {
+            filtered = append(filtered, pc)
+        }
+    }
+    return filtered
+}
