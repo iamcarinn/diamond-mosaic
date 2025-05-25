@@ -53,18 +53,28 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 
 	strazMm := 2.5 // или бери из интерфейса, если вдруг меняется
 
-	gridW := int(widthMm / strazMm)
-	gridH := int(heightMm / strazMm)
+	// gridW := int(widthMm / strazMm)
+	// gridH := int(heightMm / strazMm)
+
+	userGridW := int(widthMm / strazMm)
+	userGridH := int(heightMm / strazMm)
+	srcW := src.Bounds().Dx()
+	srcH := src.Bounds().Dy()
+	fitW, fitH, indexGrid := MakeFitIndexGrid(srcW, srcH, userGridW, userGridH)
+
 
 	// 2. Масштабирование
-	//const gridW, gridH = 50, 50 // TODO: возможность выбора
-	resized := imaging.Resize(src, gridW, gridH, imaging.CatmullRom)
+	//resized := imaging.Resize(src, gridW, gridH, imaging.CatmullRom)
+	resized := imaging.Resize(src, fitW, fitH, imaging.CatmullRom)
 
 	// 3. Фильтр
 	filtered := MedianFilter(resized, 3)
 
 	// 4. Подбор ближайших цветов
-	matched := MatchToPalette(filtered, palette, gridW, gridH)
+	matched := MatchToPalette(filtered, palette, indexGrid)
+	// Вместо MatchToPalette или вручную — вызывай:
+	//matched := FitImageToGrid(filtered, palette, userGridW, userGridH)
+
 	AssignSymbolsToMatched(matched, allSymbols)
 
 	// 5. Построение растрового холста и подсчёт цветов
@@ -97,33 +107,134 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 }
 
 // MatchToPalette строит матрицу подобранных цветов (gridW×gridH) на основе палитры.
-func MatchToPalette(resized image.Image, palette []db.PaletteColor, gridW, gridH int) [][]db.PaletteColor {
-	start := time.Now() // замер времени выполнения
+// MatchToPalette строит матрицу подобранных цветов по индексной сетке (indexGrid).
+func MatchToPalette(src image.Image, palette []db.PaletteColor, indexGrid [][][2]int) [][]db.PaletteColor {
+    start := time.Now() // замер времени выполнения
+	
+	h := len(indexGrid)
+    w := len(indexGrid[0])
+    matched := make([][]db.PaletteColor, h)
+    var wg sync.WaitGroup
 
-	matched := make([][]db.PaletteColor, gridH)
-	var wg sync.WaitGroup
-
-	for y := 0; y < gridH; y++ {
-		matched[y] = make([]db.PaletteColor, gridW)
-		wg.Add(1)
-		go func(y int) {
-			defer wg.Done()
-			for x := 0; x < gridW; x++ {
-				r, g, b, _ := resized.At(x, y).RGBA()
-				pix := colorful.Color{
-					R: float64(r) / 65535.0,
-					G: float64(g) / 65535.0,
-					B: float64(b) / 65535.0,
-				}
-				matched[y][x] = findNearestColor(pix, palette)
-			}
-		}(y)
-	}
-	wg.Wait()
+    for y := 0; y < h; y++ {
+        matched[y] = make([]db.PaletteColor, w)
+        wg.Add(1)
+        go func(y int) {
+            defer wg.Done()
+            for x := 0; x < w; x++ {
+                idx := indexGrid[y][x]
+                if idx[0] >= 0 && idx[1] >= 0 {
+                    r, g, b, _ := src.At(idx[0], idx[1]).RGBA()
+                    pix := colorful.Color{
+                        R: float64(r) / 65535.0,
+                        G: float64(g) / 65535.0,
+                        B: float64(b) / 65535.0,
+                    }
+                    matched[y][x] = findNearestColor(pix, palette)
+                } else {
+                    matched[y][x] = db.PaletteColor{
+                        DMCCode: "BLANK", // Только для пустых областей!
+                        Name:    "Пусто",
+                        Color:   colorful.Color{R: 1, G: 1, B: 1},
+                        Symbol:  "",
+                    }
+                }
+            }
+        }(y)
+    }
+    wg.Wait()
 	elapsed := time.Since(start)
 	log.Printf("[MatchToPalette] Время выполнения: %s", elapsed)
-	return matched
+    return matched
 }
+
+
+// func MatchToPalette(resized image.Image, palette []db.PaletteColor, gridW, gridH int) [][]db.PaletteColor {
+// 	start := time.Now() // замер времени выполнения
+
+// 	matched := make([][]db.PaletteColor, gridH)
+// 	var wg sync.WaitGroup
+
+// 	for y := 0; y < gridH; y++ {
+// 		matched[y] = make([]db.PaletteColor, gridW)
+// 		wg.Add(1)
+// 		go func(y int) {
+// 			defer wg.Done()
+// 			for x := 0; x < gridW; x++ {
+// 				r, g, b, _ := resized.At(x, y).RGBA()
+// 				pix := colorful.Color{
+// 					R: float64(r) / 65535.0,
+// 					G: float64(g) / 65535.0,
+// 					B: float64(b) / 65535.0,
+// 				}
+// 				matched[y][x] = findNearestColor(pix, palette)
+// 			}
+// 		}(y)
+// 	}
+// 	wg.Wait()
+// 	elapsed := time.Since(start)
+// 	log.Printf("[MatchToPalette] Время выполнения: %s", elapsed)
+// 	return matched
+// }
+
+// Возвращает матрицу [userGridH][userGridW] с координатами пикселя в resized или (-1, -1) для пустых
+func MakeFitIndexGrid(srcW, srcH, userGridW, userGridH int) (fitW, fitH int, pixelIndex [][][2]int) {
+    fitW, fitH, offsetX, offsetY := ComputeFitArea(srcW, srcH, userGridW, userGridH)
+    pixelIndex = make([][][2]int, userGridH)
+    for y := 0; y < userGridH; y++ {
+        pixelIndex[y] = make([][2]int, userGridW)
+        for x := 0; x < userGridW; x++ {
+            relX := x - offsetX
+            relY := y - offsetY
+            if relX >= 0 && relX < fitW && relY >= 0 && relY < fitH {
+                pixelIndex[y][x] = [2]int{relX, relY}
+            } else {
+                pixelIndex[y][x] = [2]int{-1, -1}
+            }
+        }
+    }
+    return fitW, fitH, pixelIndex
+}
+
+
+// // Возвращает итоговую матрицу matched с белыми полями и вписанной картинкой
+// func FitImageToGrid(
+//     src image.Image,
+//     palette []db.PaletteColor,
+//     userGridW, userGridH int,
+// ) [][]db.PaletteColor {
+//     srcW := src.Bounds().Dx()
+//     srcH := src.Bounds().Dy()
+//     fitW, fitH, offsetX, offsetY := ComputeFitArea(srcW, srcH, userGridW, userGridH)
+//     resized := imaging.Resize(src, fitW, fitH, imaging.CatmullRom)
+
+//     matched := make([][]db.PaletteColor, userGridH)
+//     for y := 0; y < userGridH; y++ {
+//         matched[y] = make([]db.PaletteColor, userGridW)
+//         for x := 0; x < userGridW; x++ {
+//             relX := x - offsetX
+//             relY := y - offsetY
+//             if relX >= 0 && relX < fitW && relY >= 0 && relY < fitH {
+//                 r, g, b, _ := resized.At(relX, relY).RGBA()
+//                 pix := colorful.Color{
+//                     R: float64(r) / 65535.0,
+//                     G: float64(g) / 65535.0,
+//                     B: float64(b) / 65535.0,
+//                 }
+//                 matched[y][x] = findNearestColor(pix, palette)
+//             } else {
+//                 matched[y][x] = db.PaletteColor{
+//                     DMCCode: "WHITE",
+//                     Name:    "Пусто",
+//                     Color:   colorful.Color{R: 1, G: 1, B: 1},
+//                     Symbol:  "",
+//                 }
+//             }
+//         }
+//     }
+//     return matched
+// }
+
 
 // findNearestColor ищет ближайший цвет в палитре по евклидову дистанции в Lab.
 func findNearestColor(c colorful.Color, palette []db.PaletteColor) db.PaletteColor {
@@ -178,7 +289,7 @@ func RenderMosaic(matched [][]db.PaletteColor, cellSize int) (image.Image, []Col
 				rect := image.Rect(x*cellSize, y*cellSize, (x+1)*cellSize, (y+1)*cellSize)
 				draw.Draw(mosaic, rect, &image.Uniform{C: color.RGBA{R: nr, G: ng, B: nb, A: 255}}, image.Point{}, draw.Src)
 				//drawBorder(mosaic, rect, color.Black)
-				//drawBorder(mosaic, rect, color.RGBA{R: 90, G: 90, B: 90, A: 255})
+				drawBorder(mosaic, rect, color.RGBA{R: 90, G: 90, B: 90, A: 255})
 			}
 		}(y)
 
@@ -319,23 +430,20 @@ func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize i
 
 	for y := 0; y < len(matched); y++ {
 		for x := 0; x < len(matched[0]); x++ {
-			sym := matched[y][x].Symbol
-			if sym == "" {
+			pc := matched[y][x]
+			if pc.Symbol == "" || pc.DMCCode == "BLANK"{
 				continue // если не присвоено, пропускаем
 			}
 
-			// Определяем цвет символа для клетки
-			col := matched[y][x].Color
-			c.SetSrc(chooseSymbolColor(col, brightnessThreshold))
-
+			c.SetSrc(chooseSymbolColor(pc.Color, brightnessThreshold))
 			// координаты центра клетки
 			pt := freetype.Pt(
-				x*cellSize+cellSize/4,   // x
-				y*cellSize+cellSize*3/4, // y
+				x*cellSize+cellSize/5,   // x
+				y*cellSize+cellSize*4/5, // y
 			)
-			_, err := c.DrawString(sym, pt)
+			_, err := c.DrawString(pc.Symbol, pt)
 			if err != nil {
-				log.Printf("ошибка рисования символа %q: %v", sym, err)
+				log.Printf("ошибка рисования символа %q: %v", pc.Symbol, err)
 			}
 		}
 	}
@@ -391,3 +499,24 @@ func drawBorder(img *image.RGBA, rect image.Rectangle, c color.Color) {
 		img.Set(maxX-1, y, c) // правая
 	}
 }
+
+// Вычисляет размеры вписанной области (в клетках) с сохранением пропорций
+// и возвращает gridFitW, gridFitH, offsetX, offsetY для вставки по центру
+func ComputeFitArea(srcW, srcH, userGridW, userGridH int) (fitW, fitH, offsetX, offsetY int) {
+    srcRatio := float64(srcW) / float64(srcH)
+    userRatio := float64(userGridW) / float64(userGridH)
+    
+	if srcRatio > userRatio {
+		fitW = userGridW
+		fitH = int(float64(userGridW) / srcRatio)
+		offsetX = 0
+		offsetY = 0 // ← прижимаем к верху!
+	} else {
+		fitH = userGridH
+		fitW = int(float64(userGridH) * srcRatio)
+		offsetY = 0
+		offsetX = 0 // ← прижимаем к левому краю!
+	}
+    return
+}
+
