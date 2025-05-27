@@ -14,7 +14,8 @@ func main() {
 
 	// Загружаем палитру из базы данных
 	palette, err := db.LoadPalette(connStr)
-	palette = db.FilterPalette(palette, 0.125)
+	palette = db.FilterPalette(palette, 0.11)
+
 	if err != nil {
 		log.Fatalf("Ошибка загрузки палитры: %v", err)
 	}
