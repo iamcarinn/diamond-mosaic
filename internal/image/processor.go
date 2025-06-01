@@ -84,7 +84,7 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 
 	_, usages := RenderMosaic(matched, cellSize)
 	// Удаляем редкие цвета:
-	RemoveRareColors(matched, usages, 30) // 15 — минимальное количество страз
+	//RemoveRareColors(matched, usages, 30) // 15 — минимальное количество страз
 	// Повторно пересчитываем usages и картинку:
 	mosaic, usages := RenderMosaic(matched, cellSize)
 
