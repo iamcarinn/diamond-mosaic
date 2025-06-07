@@ -69,6 +69,10 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage) ([]byte, e
 
 	// Рисуем каждую запись легенды
 	for _, u := range usages {
+		// не выводим пустые
+		if u.PaletteColor.DMCCode == "BLANK" {
+			continue
+		}
 		// позиция этого квадрата
 		xPos := marginLeft + float64(currentCol)*colW
 		yPos := startY + float64(currentRow)*lineH
@@ -87,7 +91,15 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage) ([]byte, e
 
 		// === Символ по центру квадратика ===
 		pdf.SetFont("Arial", "B", 10) // жирный шрифт, размер 10
-		pdf.SetTextColor(0, 0, 0)     // чёрный символ
+		//pdf.SetTextColor(0, 0, 0)     // чёрный символ
+		// Определяем яркость цвета фона
+		l, _, _ := u.PaletteColor.Color.Lab()
+		if l > 0.5 {
+			pdf.SetTextColor(0, 0, 0) // светлый фон → чёрный текст
+		} else {
+			pdf.SetTextColor(255, 255, 255) // тёмный фон → белый текст
+		}
+
 		symbol := u.PaletteColor.Symbol
 		fontSize := 10.0 // размер шрифта, должен совпадать с SetFont
 		// Получаем ширину символа (в миллиметрах)
@@ -97,9 +109,10 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage) ([]byte, e
 		// Y — по центру квадрата (подбор вручную для красоты)
 		symbolY := yPos + (squareSize+fontSize)/2 - 3.5
 		pdf.Text(symbolX, symbolY, symbol)
+
 		// Вернуть обычный шрифт для текста справа
 		pdf.SetFont("Arial", "", 8)
-
+		pdf.SetTextColor(0, 0, 0)
 		// текст справа: DMC + (количество)
 		text := fmt.Sprintf("%s (%d)", u.PaletteColor.DMCCode, u.Count)
 		textX := xPos + squareSize + gutter

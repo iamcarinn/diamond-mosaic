@@ -45,3 +45,22 @@ document.getElementById("uploadForm").addEventListener("submit", async function 
     status.textContent = "Произошла ошибка при генерации схемы.";
   }
 });
+
+document.addEventListener("DOMContentLoaded", function() {
+  const fileInput = document.querySelector('.file-label input[type="file"]');
+  const customText = document.querySelector('.file-custom-text');
+  const btn = document.querySelector('.file-upload-btn');
+  if (fileInput && btn && customText) {
+    btn.addEventListener('click', function(e) {
+      e.preventDefault();
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', function() {
+      customText.textContent = fileInput.files.length
+        ? fileInput.files[0].name
+        : 'Файл не выбран';
+    });
+  }
+});
+
+

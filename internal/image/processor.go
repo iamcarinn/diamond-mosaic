@@ -51,10 +51,7 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 	widthMm := float64(widthCm) * 10.0
 	heightMm := float64(heightCm) * 10.0
 
-	strazMm := 2.5 // или бери из интерфейса, если вдруг меняется
-
-	// gridW := int(widthMm / strazMm)
-	// gridH := int(heightMm / strazMm)
+	strazMm := 2.5
 
 	userGridW := int(widthMm / strazMm)
 	userGridH := int(heightMm / strazMm)
@@ -72,19 +69,15 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 
 	// 4. Подбор ближайших цветов
 	matched := MatchToPalette(filtered, palette, indexGrid)
-	// Вместо MatchToPalette или вручную — вызывай:
-	//matched := FitImageToGrid(filtered, palette, userGridW, userGridH)
 
 	AssignSymbolsToMatched(matched, allSymbols)
 
 	// 5. Построение растрового холста и подсчёт цветов
 	const cellSize = 10
-	//mosaic, usages := RenderMosaic(matched, cellSize)
 	// Удаляем редкие цвета:
-
 	_, usages := RenderMosaic(matched, cellSize)
 	// Удаляем редкие цвета:
-	//RemoveRareColors(matched, usages, 30) // 15 — минимальное количество страз
+	RemoveRareColors(matched, usages, 30) // удаляем редкие цвета
 	// Повторно пересчитываем usages и картинку:
 	mosaic, usages := RenderMosaic(matched, cellSize)
 
@@ -106,8 +99,7 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 	return mosaic, usages, nil
 }
 
-// MatchToPalette строит матрицу подобранных цветов (gridW×gridH) на основе палитры.
-// MatchToPalette строит матрицу подобранных цветов по индексной сетке (indexGrid).
+// MatchToPalette строит матрицу подобранных цветов
 func MatchToPalette(src image.Image, palette []db.PaletteColor, indexGrid [][][2]int) [][]db.PaletteColor {
     start := time.Now() // замер времени выполнения
 	
@@ -148,35 +140,6 @@ func MatchToPalette(src image.Image, palette []db.PaletteColor, indexGrid [][][2
     return matched
 }
 
-
-// func MatchToPalette(resized image.Image, palette []db.PaletteColor, gridW, gridH int) [][]db.PaletteColor {
-// 	start := time.Now() // замер времени выполнения
-
-// 	matched := make([][]db.PaletteColor, gridH)
-// 	var wg sync.WaitGroup
-
-// 	for y := 0; y < gridH; y++ {
-// 		matched[y] = make([]db.PaletteColor, gridW)
-// 		wg.Add(1)
-// 		go func(y int) {
-// 			defer wg.Done()
-// 			for x := 0; x < gridW; x++ {
-// 				r, g, b, _ := resized.At(x, y).RGBA()
-// 				pix := colorful.Color{
-// 					R: float64(r) / 65535.0,
-// 					G: float64(g) / 65535.0,
-// 					B: float64(b) / 65535.0,
-// 				}
-// 				matched[y][x] = findNearestColor(pix, palette)
-// 			}
-// 		}(y)
-// 	}
-// 	wg.Wait()
-// 	elapsed := time.Since(start)
-// 	log.Printf("[MatchToPalette] Время выполнения: %s", elapsed)
-// 	return matched
-// }
-
 // Возвращает матрицу [userGridH][userGridW] с координатами пикселя в resized или (-1, -1) для пустых
 func MakeFitIndexGrid(srcW, srcH, userGridW, userGridH int) (fitW, fitH int, pixelIndex [][][2]int) {
     fitW, fitH, offsetX, offsetY := ComputeFitArea(srcW, srcH, userGridW, userGridH)
@@ -195,46 +158,6 @@ func MakeFitIndexGrid(srcW, srcH, userGridW, userGridH int) (fitW, fitH int, pix
     }
     return fitW, fitH, pixelIndex
 }
-
-
-// // Возвращает итоговую матрицу matched с белыми полями и вписанной картинкой
-// func FitImageToGrid(
-//     src image.Image,
-//     palette []db.PaletteColor,
-//     userGridW, userGridH int,
-// ) [][]db.PaletteColor {
-//     srcW := src.Bounds().Dx()
-//     srcH := src.Bounds().Dy()
-//     fitW, fitH, offsetX, offsetY := ComputeFitArea(srcW, srcH, userGridW, userGridH)
-//     resized := imaging.Resize(src, fitW, fitH, imaging.CatmullRom)
-
-//     matched := make([][]db.PaletteColor, userGridH)
-//     for y := 0; y < userGridH; y++ {
-//         matched[y] = make([]db.PaletteColor, userGridW)
-//         for x := 0; x < userGridW; x++ {
-//             relX := x - offsetX
-//             relY := y - offsetY
-//             if relX >= 0 && relX < fitW && relY >= 0 && relY < fitH {
-//                 r, g, b, _ := resized.At(relX, relY).RGBA()
-//                 pix := colorful.Color{
-//                     R: float64(r) / 65535.0,
-//                     G: float64(g) / 65535.0,
-//                     B: float64(b) / 65535.0,
-//                 }
-//                 matched[y][x] = findNearestColor(pix, palette)
-//             } else {
-//                 matched[y][x] = db.PaletteColor{
-//                     DMCCode: "WHITE",
-//                     Name:    "Пусто",
-//                     Color:   colorful.Color{R: 1, G: 1, B: 1},
-//                     Symbol:  "",
-//                 }
-//             }
-//         }
-//     }
-//     return matched
-// }
-
 
 // findNearestColor ищет ближайший цвет в палитре по евклидову дистанции в Lab.
 func findNearestColor(c colorful.Color, palette []db.PaletteColor) db.PaletteColor {
@@ -308,20 +231,29 @@ func RenderMosaic(matched [][]db.PaletteColor, cellSize int) (image.Image, []Col
 
 // Функция: заменить редкие цвета на ближайший частый
 func RemoveRareColors(matched [][]db.PaletteColor, usages []ColorUsage, minCount int) {
-	// Собрать частые и редкие цвета
-	majorColors := map[string]db.PaletteColor{}
-	minorColors := map[string]db.PaletteColor{}
+	// 1. Собрать частые и редкие цвета
+	majorColors := map[string]db.PaletteColor{}	// частые цвета
+	minorColors := map[string]db.PaletteColor{}	// редкие цвета
+	// поиск цветов
 	for _, u := range usages {
+		if u.PaletteColor.DMCCode == "BLANK" {
+			continue // игнорируем BLANK полностью
+		}
 		if u.Count >= minCount {
 			majorColors[u.PaletteColor.DMCCode] = u.PaletteColor
 		} else {
 			minorColors[u.PaletteColor.DMCCode] = u.PaletteColor
 		}
 	}
+	
+	// 2. Если вдруг нет частых цветов, просто ничего не делаем
 	if len(majorColors) == 0 {
-		// Если вдруг нет частых цветов, просто ничего не делаем
+		
 		return
 	}
+
+	// 3. Поиск для каждого редкого цвета ближайший из частых
+
 	// Функция поиска ближайшего основного цвета
 	findNearestMajor := func(c colorful.Color) db.PaletteColor {
 		l1, a1, b1 := c.Lab()
@@ -345,6 +277,9 @@ func RemoveRareColors(matched [][]db.PaletteColor, usages []ColorUsage, minCount
 	for y := 0; y < len(matched); y++ {
 		for x := 0; x < len(matched[0]); x++ {
 			pc := matched[y][x]
+			if pc.DMCCode == "BLANK" {
+				continue // не трогаем фон
+			}
 			if _, isMinor := minorColors[pc.DMCCode]; isMinor {
 				matched[y][x] = findNearestMajor(pc.Color)
 			}
@@ -439,7 +374,7 @@ func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize i
 			// координаты центра клетки
 			pt := freetype.Pt(
 				x*cellSize+cellSize/5,   // x
-				y*cellSize+cellSize*4/5, // y
+				y*cellSize+cellSize*5/6, // y
 			)
 			_, err := c.DrawString(pc.Symbol, pt)
 			if err != nil {

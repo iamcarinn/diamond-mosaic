@@ -3,18 +3,55 @@
 <head>
   <meta charset="UTF-8" />
   <title>Алмазная мозаика</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
+<div class="page-footer">
+  Акиншина О. М.<br>
+  ИЭ-66-21
+</div>
 <body>
   <h1>Генератор схемы для алмазной мозаики</h1>
 
-  <form id="uploadForm">
-    <label>Ширина основы (см): <input type="number" name="width" min="1" max="200" required></label>
-    <label>Высота основы (см): <input type="number" name="height" min="1" max="200" required></label>
-    <input type="file" name="file" accept="image/png" required />
-    <button type="submit">Создать схему</button>
-  </form>
+  <div class="container">
 
+    <form id="uploadForm">
+
+      <label>Ширина основы (см):
+        <input type="number" name="width" min="1" max="200" required>
+      </label>
+
+      <label>Высота основы (см):
+        <input type="number" name="height" min="1" max="200" required>
+      </label>
+
+      <label class="file-label" style="position: relative;">
+        <span class="file-label-title">Выберите изображение (.png):</span>
+        <input type="file" name="file" accept="image/png" required>
+        <span class="file-upload-btn">
+          <span class="file-upload-icon">📁</span>
+          <span class="file-upload-text">Выбрать файл</span>
+          <span class="file-custom-text">Файл не выбран</span>
+        </span>
+      </label>
+
+      <button type="submit">Создать схему</button>
+    </form>
+
+    <section class="info-block">
+      <p>
+        Этот сервис превращает изображение в схему для алмазной мозаики. <br><br>
+        <strong>Загружайте файл в формате PNG</strong>, указывайте размеры — и получите PDF с подробной схемой и таблицей цветов.
+      </p>
+      <h3>Что понадобится для сборки:</h3>
+      <ul>
+        <li>Распечатанная схема из PDF</li>
+        <li>Алмазы 2,5 мм по DMC-кодам (цвета указаны в легенде)</li>
+        <li>Пинцет или стилус для укладки</li>
+        <li>Клеевая основа подходящего размера</li>
+      </ul>
+    </section>
+  </div>
 
   <p id="status"></p>
 
