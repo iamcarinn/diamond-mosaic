@@ -1,22 +1,23 @@
 package pdf
 
 import (
-    "bytes"
-    "fmt"
-    "image"
-    "image/png"
+	"bytes"
+	"fmt"
+	"image"
+	"image/png"
 
-    imagepkg "diamond-mosaic/internal/image"
-    "github.com/jung-kurt/gofpdf"
+	imagepkg "diamond-mosaic/internal/image"
+
+	"github.com/jung-kurt/gofpdf"
 )
 
 // GeneratePDF генерирует PDF файл с мозаикой и легендой.
 // Принимает на вход картинку-мозаику и список использованных цветов.
-func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage) ([]byte, error) {
-    var imgBuf bytes.Buffer
-    if err := png.Encode(&imgBuf, mosaicImg); err != nil {
-        return nil, fmt.Errorf("ошибка кодирования PNG: %v", err)
-    }
+func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage, sizeInfo imagepkg.MosaicSizeInfo) ([]byte, error) {
+	var imgBuf bytes.Buffer
+	if err := png.Encode(&imgBuf, mosaicImg); err != nil {
+		return nil, fmt.Errorf("ошибка кодирования PNG: %v", err)
+	}
 
 	// Константы расположения
 	const (
@@ -30,35 +31,36 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage) ([]byte, e
 		marginRight     = 10.0
 	)
 
-    pdf := gofpdf.New("P", "mm", "A4", "")
-    pdf.AddPage()
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	pageW, pageH := pdf.GetPageSize()
+	y0 := printMosaicSizes(pdf, sizeInfo, pageW, pageMarginTop)
+	// Вставка изображения (см. твой код)
+	pdf.RegisterImageOptionsReader("mosaic", gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: false}, &imgBuf)
 
-    // Вставка изображения (см. твой код)
-    pdf.RegisterImageOptionsReader("mosaic", gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: false}, &imgBuf)
-    pageW, pageH := pdf.GetPageSize()
-    info := pdf.GetImageInfo("mosaic")
-    imgW, imgH := info.Width(), info.Height()
-    maxW := pageW - marginLeft - marginRight
-    scale := maxW / imgW
-    if imgH*scale > (pageH - pageMarginTop - legendMarginTop - bottomMargin) {
-        scale = (pageH - pageMarginTop - legendMarginTop - bottomMargin) / imgH
-    }
-    imgW, imgH = imgW*scale, imgH*scale
-    x0 := (pageW - imgW) / 2
-    y0 := pageMarginTop
-    pdf.ImageOptions("mosaic", x0, y0, imgW, imgH, false, gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: false}, 0, "")
+	info := pdf.GetImageInfo("mosaic")
+	imgW, imgH := info.Width(), info.Height()
+	maxW := pageW - marginLeft - marginRight
+	scale := maxW / imgW
+	if imgH*scale > (pageH - pageMarginTop - legendMarginTop - bottomMargin) {
+		scale = (pageH - pageMarginTop - legendMarginTop - bottomMargin) / imgH
+	}
+	imgW, imgH = imgW*scale, imgH*scale
+	x0 := (pageW - imgW) / 2
+	// y0 := pageMarginTop
+	pdf.ImageOptions("mosaic", x0, y0, imgW, imgH, false, gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: false}, 0, "")
 
 	// ГОТОВИМ ПЕРЕМЕННЫЕ ДЛЯ ЛЕГЕНДЫ
 	pdf.SetFont("Arial", "", 8)
 	usableW := pageW - marginLeft - marginRight
 	colW := usableW / float64(cols)
 	lineH := squareSize + 1.0
-	
+
 	currentCol := 0
 	currentRow := 0
 	startY := y0 + imgH + legendMarginTop
 
-    // Функция начала новой страницы для легенды
+	// Функция начала новой страницы для легенды
 	newPage := func() {
 		pdf.AddPage()
 		pdf.SetFont("Arial", "", 8)
@@ -127,11 +129,34 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage) ([]byte, e
 		}
 	}
 
+	// Возврат готового PDF как []byte
+	var pdfBuf bytes.Buffer
+	if err := pdf.Output(&pdfBuf); err != nil {
+		return nil, fmt.Errorf("ошибка формирования PDF: %v", err)
+	}
+	return pdfBuf.Bytes(), nil
+}
 
-    // Возврат готового PDF как []byte
-    var pdfBuf bytes.Buffer
-    if err := pdf.Output(&pdfBuf); err != nil {
-        return nil, fmt.Errorf("ошибка формирования PDF: %v", err)
-    }
-    return pdfBuf.Bytes(), nil
+// Выводит текст с размерами над изображением
+func printMosaicSizes(pdf *gofpdf.Fpdf, size imagepkg.MosaicSizeInfo, pageW float64, pageMarginTop float64) float64 {
+	pdf.AddUTF8Font("DejaVu", "", "fonts/DejaVuSans.ttf")
+	pdf.SetFont("DejaVu", "", 12)
+	pdf.SetTextColor(60, 70, 160)
+	baseStr := fmt.Sprintf(
+		"Размер основы: %d x %d см (%d x %d шт)",
+		size.BaseWidthCM, size.BaseHeightCM, size.BaseWidthPX, size.BaseHeightPX,
+	)
+	imgStr := fmt.Sprintf(
+		"Размер изображения: %d x %d см (%d x %d шт)",
+		size.ImgWidthCM, size.ImgHeightCM, size.ImgWidthPX, size.ImgHeightPX,
+	)
+
+	// Центрируем по ширине
+	pdf.SetXY(0, pageMarginTop-10)
+	pdf.CellFormat(pageW, 7, baseStr, "", 1, "C", false, 0, "")
+	pdf.SetX(0)
+	pdf.CellFormat(pageW, 7, imgStr, "", 1, "C", false, 0, "")
+
+	// Вернём новую позицию по Y (для картинки)
+	return pdf.GetY() + 3 // +3 мм — небольшой отступ после текста
 }

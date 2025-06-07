@@ -46,7 +46,7 @@ func GenerateHandler(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	// Получаем мозаичное изображение и статистику использования цветов
-	mosaicImg, usages, err := image.Process(file, Palette, widthCm, heightCm)
+	mosaicImg, usages, sizeInfo, err := image.Process(file, Palette, widthCm, heightCm)
 	if err != nil {
 		log.Printf("Ошибка обработки изображения: %v", err)
 		http.Error(w, fmt.Sprintf("Ошибка обработки изображения: %v", err), http.StatusInternalServerError)
@@ -54,7 +54,7 @@ func GenerateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Генерируем PDF через отдельную функцию
-	pdfBytes, err := pdf.GeneratePDF(mosaicImg, usages)
+	pdfBytes, err := pdf.GeneratePDF(mosaicImg, usages, sizeInfo)
 	if err != nil {
 		log.Printf("Ошибка формирования PDF: %v", err)
 		http.Error(w, "Ошибка формирования PDF", http.StatusInternalServerError)

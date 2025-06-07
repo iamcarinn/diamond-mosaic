@@ -27,10 +27,12 @@ var allSymbols = []string{
 	"[", "]", "{", "}", "<", ">", "?", "/", "\\", "|", ".", ",", ":", ";", "'", "\"",
 }
 
-// // Присваиваем символы только используемым цветам
-// for i := 0; i < len(usages) && i < len(allSymbols); i++ {
-// 	usages[i].PaletteColor.Symbol = allSymbols[i]
-// }
+type MosaicSizeInfo struct {
+	BaseWidthCM, BaseHeightCM int // Основа в см
+	BaseWidthPX, BaseHeightPX int // Основа в "шт"
+	ImgWidthCM, ImgHeightCM   int // Картинка в см (занятое пространство)
+	ImgWidthPX, ImgHeightPX   int // Картинка в "шт"
+}
 
 // ColorUsage связывает цвет из палитры с количеством пикселей (алмазов).
 type ColorUsage struct {
@@ -40,11 +42,11 @@ type ColorUsage struct {
 
 // Process декодирует входное изображение, превращает его в мозаичный рисунок
 // и собирает список уникальных DMC-цветов с их количеством использования.
-func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm int) (image.Image, []ColorUsage, error) {
+func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm int) (image.Image, []ColorUsage, MosaicSizeInfo, error) {
 	// 1. Декодируем
 	src, err := imaging.Decode(file)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, MosaicSizeInfo{}, err
 	}
 
 	// Переводим см в мм
@@ -58,7 +60,6 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 	srcW := src.Bounds().Dx()
 	srcH := src.Bounds().Dy()
 	fitW, fitH, indexGrid := MakeFitIndexGrid(srcW, srcH, userGridW, userGridH)
-
 
 	// 2. Масштабирование
 	//resized := imaging.Resize(src, gridW, gridH, imaging.CatmullRom)
@@ -96,67 +97,97 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 		log.Printf("ошибка нанесения символов: %v", err)
 	}
 
-	return mosaic, usages, nil
+	sizeInfo := CalcMosaicSizeInfo(
+		widthCm, heightCm, // пользовательские размеры
+		userGridW, userGridH, // вся сетка основы
+		fitW, fitH, // вписанное изображение
+		2.5, // размер 1 алмаза в мм
+	)
+
+	return mosaic, usages, sizeInfo, nil
+}
+
+// mosaicParams.go или прямо в нужном файле
+func CalcMosaicSizeInfo(
+	baseWcm, baseHcm int, // заданные пользователем см
+	gridW, gridH int, // сетка основы (в алмазиках)
+	imgFitW, imgFitH int, // размеры вписанного изображения в алмазиках
+	cellSizeMM float64, // размер 1 алмаза в мм, например 2.5
+) MosaicSizeInfo {
+	// Переводим из алмазиков в сантиметры:
+	imgWcm := int(float64(imgFitW) * cellSizeMM / 10.0)
+	imgHcm := int(float64(imgFitH) * cellSizeMM / 10.0)
+
+	return MosaicSizeInfo{
+		BaseWidthCM:  baseWcm,
+		BaseHeightCM: baseHcm,
+		BaseWidthPX:  gridW,
+		BaseHeightPX: gridH,
+		ImgWidthCM:   imgWcm,
+		ImgHeightCM:  imgHcm,
+		ImgWidthPX:   imgFitW,
+		ImgHeightPX:  imgFitH,
+	}
 }
 
 // MatchToPalette строит матрицу подобранных цветов
 func MatchToPalette(src image.Image, palette []db.PaletteColor, indexGrid [][][2]int) [][]db.PaletteColor {
-    start := time.Now() // замер времени выполнения
-	
-	h := len(indexGrid)
-    w := len(indexGrid[0])
-    matched := make([][]db.PaletteColor, h)
-    var wg sync.WaitGroup
+	start := time.Now() // замер времени выполнения
 
-    for y := 0; y < h; y++ {
-        matched[y] = make([]db.PaletteColor, w)
-        wg.Add(1)
-        go func(y int) {
-            defer wg.Done()
-            for x := 0; x < w; x++ {
-                idx := indexGrid[y][x]
-                if idx[0] >= 0 && idx[1] >= 0 {
-                    r, g, b, _ := src.At(idx[0], idx[1]).RGBA()
-                    pix := colorful.Color{
-                        R: float64(r) / 65535.0,
-                        G: float64(g) / 65535.0,
-                        B: float64(b) / 65535.0,
-                    }
-                    matched[y][x] = findNearestColor(pix, palette)
-                } else {
-                    matched[y][x] = db.PaletteColor{
-                        DMCCode: "BLANK", // Только для пустых областей!
-                        Name:    "Пусто",
-                        Color:   colorful.Color{R: 1, G: 1, B: 1},
-                        Symbol:  "",
-                    }
-                }
-            }
-        }(y)
-    }
-    wg.Wait()
+	h := len(indexGrid)
+	w := len(indexGrid[0])
+	matched := make([][]db.PaletteColor, h)
+	var wg sync.WaitGroup
+
+	for y := 0; y < h; y++ {
+		matched[y] = make([]db.PaletteColor, w)
+		wg.Add(1)
+		go func(y int) {
+			defer wg.Done()
+			for x := 0; x < w; x++ {
+				idx := indexGrid[y][x]
+				if idx[0] >= 0 && idx[1] >= 0 {
+					r, g, b, _ := src.At(idx[0], idx[1]).RGBA()
+					pix := colorful.Color{
+						R: float64(r) / 65535.0,
+						G: float64(g) / 65535.0,
+						B: float64(b) / 65535.0,
+					}
+					matched[y][x] = findNearestColor(pix, palette)
+				} else {
+					matched[y][x] = db.PaletteColor{
+						DMCCode: "BLANK", // Только для пустых областей!
+						Name:    "Пусто",
+						Color:   colorful.Color{R: 1, G: 1, B: 1},
+						Symbol:  "",
+					}
+				}
+			}
+		}(y)
+	}
+	wg.Wait()
 	elapsed := time.Since(start)
 	log.Printf("[MatchToPalette] Время выполнения: %s", elapsed)
-    return matched
+	return matched
 }
 
 // Возвращает матрицу [userGridH][userGridW] с координатами пикселя в resized или (-1, -1) для пустых
 func MakeFitIndexGrid(srcW, srcH, userGridW, userGridH int) (fitW, fitH int, pixelIndex [][][2]int) {
-    fitW, fitH, offsetX, offsetY := ComputeFitArea(srcW, srcH, userGridW, userGridH)
-    pixelIndex = make([][][2]int, userGridH)
-    for y := 0; y < userGridH; y++ {
-        pixelIndex[y] = make([][2]int, userGridW)
-        for x := 0; x < userGridW; x++ {
-            relX := x - offsetX
-            relY := y - offsetY
-            if relX >= 0 && relX < fitW && relY >= 0 && relY < fitH {
-                pixelIndex[y][x] = [2]int{relX, relY}
-            } else {
-                pixelIndex[y][x] = [2]int{-1, -1}
-            }
-        }
-    }
-    return fitW, fitH, pixelIndex
+	fitW, fitH, offsetX, offsetY := ComputeFitArea(srcW, srcH, userGridW, userGridH)
+	pixelIndex = make([][][2]int, userGridH)
+	for y := 0; y < userGridH; y++ {
+		pixelIndex[y] = make([][2]int, userGridW)
+		for x := 0; x < userGridW; x++ {
+			relX := x - offsetX
+			relY := y - offsetY
+			if relX >= 0 && relX < fitW && relY >= 0 && relY < fitH {
+				pixelIndex[y][x] = [2]int{relX, relY}
+			} else {
+				pixelIndex[y][x] = [2]int{-1, -1}
+			}
+		}
+	}
+	return fitW, fitH, pixelIndex
 }
 
 // findNearestColor ищет ближайший цвет в палитре по евклидову дистанции в Lab.
@@ -232,8 +263,8 @@ func RenderMosaic(matched [][]db.PaletteColor, cellSize int) (image.Image, []Col
 // Функция: заменить редкие цвета на ближайший частый
 func RemoveRareColors(matched [][]db.PaletteColor, usages []ColorUsage, minCount int) {
 	// 1. Собрать частые и редкие цвета
-	majorColors := map[string]db.PaletteColor{}	// частые цвета
-	minorColors := map[string]db.PaletteColor{}	// редкие цвета
+	majorColors := map[string]db.PaletteColor{} // частые цвета
+	minorColors := map[string]db.PaletteColor{} // редкие цвета
 	// поиск цветов
 	for _, u := range usages {
 		if u.PaletteColor.DMCCode == "BLANK" {
@@ -245,10 +276,10 @@ func RemoveRareColors(matched [][]db.PaletteColor, usages []ColorUsage, minCount
 			minorColors[u.PaletteColor.DMCCode] = u.PaletteColor
 		}
 	}
-	
+
 	// 2. Если вдруг нет частых цветов, просто ничего не делаем
 	if len(majorColors) == 0 {
-		
+
 		return
 	}
 
@@ -366,7 +397,7 @@ func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize i
 	for y := 0; y < len(matched); y++ {
 		for x := 0; x < len(matched[0]); x++ {
 			pc := matched[y][x]
-			if pc.Symbol == "" || pc.DMCCode == "BLANK"{
+			if pc.Symbol == "" || pc.DMCCode == "BLANK" {
 				continue // если не присвоено, пропускаем
 			}
 
@@ -438,9 +469,9 @@ func drawBorder(img *image.RGBA, rect image.Rectangle, c color.Color) {
 // Вычисляет размеры вписанной области (в клетках) с сохранением пропорций
 // и возвращает gridFitW, gridFitH, offsetX, offsetY для вставки по центру
 func ComputeFitArea(srcW, srcH, userGridW, userGridH int) (fitW, fitH, offsetX, offsetY int) {
-    srcRatio := float64(srcW) / float64(srcH)
-    userRatio := float64(userGridW) / float64(userGridH)
-    
+	srcRatio := float64(srcW) / float64(srcH)
+	userRatio := float64(userGridW) / float64(userGridH)
+
 	if srcRatio > userRatio {
 		fitW = userGridW
 		fitH = int(float64(userGridW) / srcRatio)
@@ -452,6 +483,5 @@ func ComputeFitArea(srcW, srcH, userGridW, userGridH int) (fitW, fitH, offsetX, 
 		offsetY = 0
 		offsetX = 0 // ← прижимаем к левому краю!
 	}
-    return
+	return
 }
-
