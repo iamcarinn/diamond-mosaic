@@ -10,26 +10,30 @@ import (
 
 // PaletteColor описывает цвет из палитры.
 type PaletteColor struct {
-	DMCCode string
-	Name    string
-	Color   colorful.Color
-	Symbol  string
+	DMCCode string			// Код цвета по DMC
+	Name    string			// Название цвета
+	Color   colorful.Color	// Цвет в RGB
+	Symbol  string			// Символ для схемы
 }
 
-// LoadPalette подключается к БД и загружает данные из таблицы palette.
+// LoadPalette подключается к базе данных и загружает палитру цветов из таблицы palette.
+// На выходе — срез PaletteColor, каждый элемент содержит код, название и цвет (RGB).
 func LoadPalette(connStr string) ([]PaletteColor, error) {
+	// 1. Открываем соединение с БД
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка открытия БД: %w", err)
 	}
 	defer db.Close()
 
+	// 2. Делаем SELECT-запрос к таблице palette
 	rows, err := db.Query("SELECT dmc_code, name, r, g, b FROM palette")
 	if err != nil {
 		return nil, fmt.Errorf("ошибка запроса к таблице palette: %w", err)
 	}
 	defer rows.Close()
 
+	// 3. Считываем строки и строим срез PaletteColor
 	var palette []PaletteColor
 	for rows.Next() {
 		var dmcCode, name string
@@ -51,16 +55,21 @@ func LoadPalette(connStr string) ([]PaletteColor, error) {
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("ошибка после чтения строк: %w", err)
 	}
+	// 5. Возвращаем палитру
 	return palette, nil
 }
 
-// FilterPalette — оставить только "достаточно разные" цвета
+// FilterPalette оставляет только "достаточно разные" цвета из исходной палитры.
+// minDist — минимальная дистанция между цветами в пространстве Lab.
 func FilterPalette(palette []PaletteColor, minDist float64) []PaletteColor {
     var filtered []PaletteColor
 
+	// 1. Перебираем все цвета из палитры
     for _, pc := range palette {
         tooClose := false
         l1, a1, b1 := pc.Color.Lab()
+
+		// 2. Проверяем, что этот цвет не слишком близок к уже отобранным
         for _, fpc := range filtered {
             l2, a2, b2 := fpc.Color.Lab()
             dl := l1 - l2
@@ -72,9 +81,11 @@ func FilterPalette(palette []PaletteColor, minDist float64) []PaletteColor {
                 break
             }
         }
+		// 3. Если цвет уникальный по расстоянию — добавляем
         if !tooClose {
             filtered = append(filtered, pc)
         }
     }
+	// 4. Возвращаем отфильтрованный срез
     return filtered
 }

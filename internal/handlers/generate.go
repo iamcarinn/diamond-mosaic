@@ -11,20 +11,23 @@ import (
 	"diamond-mosaic/internal/pdf"
 )
 
-// Palette — глобальная палитра из БД.
+// Palette — глобальная палитра из базы данных DMC, используется всеми обработчиками для подбора цветов.
 var Palette []db.PaletteColor
 
+// SetPaletteFromDB устанавливает глобальную палитру для использования в обработчиках.
 func SetPaletteFromDB(p []db.PaletteColor) {
 	Palette = p
 }
 
-// GenerateHandler отдаёт PDF с мозаикой (сверху) и легендой, разбитой на страницы по необходимости.
+// GenerateHandler обрабатывает POST-запрос /generate и возвращает PDF-файл с мозаикой и легендой.
 func GenerateHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. Разрешён только POST-запрос
 	if r.Method != http.MethodPost {
 		http.Error(w, "Метод не поддерживается", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// 2. Получаем размеры основы из формы
 	widthStr := r.FormValue("width")
 	heightStr := r.FormValue("height")
 	if widthStr == "" || heightStr == "" {
@@ -38,6 +41,7 @@ func GenerateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 3. Получаем загруженный PNG-файл
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, "Ошибка получения файла", http.StatusBadRequest)
@@ -45,7 +49,7 @@ func GenerateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Получаем мозаичное изображение и статистику использования цветов
+	// 4. Обрабатываем изображение: ресайз, подбор цветов, статистика
 	mosaicImg, usages, sizeInfo, err := image.Process(file, Palette, widthCm, heightCm)
 	if err != nil {
 		log.Printf("Ошибка обработки изображения: %v", err)
@@ -53,7 +57,7 @@ func GenerateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Генерируем PDF через отдельную функцию
+	// 5. Генерируем PDF-файл по результатам обработки
 	pdfBytes, err := pdf.GeneratePDF(mosaicImg, usages, sizeInfo)
 	if err != nil {
 		log.Printf("Ошибка формирования PDF: %v", err)
@@ -61,6 +65,7 @@ func GenerateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 6. Отправляем PDF-файл на скачивание
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", `attachment; filename="mosaic_with_legend.pdf"`)
 	if _, err := w.Write(pdfBytes); err != nil {

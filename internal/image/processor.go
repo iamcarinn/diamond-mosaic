@@ -18,7 +18,7 @@ import (
 	"github.com/lucasb-eyer/go-colorful"
 )
 
-// Символы для легенды
+// allSymbols — набор символов для легенды схемы.
 var allSymbols = []string{
 	"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
 	"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
@@ -27,6 +27,7 @@ var allSymbols = []string{
 	"[", "]", "{", "}", "<", ">", "?", "/", "\\", "|", ".", ",", ":", ";", "'", "\"",
 }
 
+// MosaicSizeInfo описывает физические и "штучные" размеры основы и вписанного изображения.
 type MosaicSizeInfo struct {
 	BaseWidthCM, BaseHeightCM int // Основа в см
 	BaseWidthPX, BaseHeightPX int // Основа в "шт"
@@ -43,60 +44,58 @@ type ColorUsage struct {
 // Process декодирует входное изображение, превращает его в мозаичный рисунок
 // и собирает список уникальных DMC-цветов с их количеством использования.
 func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm int) (image.Image, []ColorUsage, MosaicSizeInfo, error) {
-	// 1. Декодируем
+	// 1. Декодируем изображение
 	src, err := imaging.Decode(file)
 	if err != nil {
 		return nil, nil, MosaicSizeInfo{}, err
 	}
 
-	// Переводим см в мм
+	// 2. Переводим см в мм и рассчитываем размеры сетки пользователя
 	widthMm := float64(widthCm) * 10.0
 	heightMm := float64(heightCm) * 10.0
-
 	strazMm := 2.5
-
 	userGridW := int(widthMm / strazMm)
 	userGridH := int(heightMm / strazMm)
 	srcW := src.Bounds().Dx()
 	srcH := src.Bounds().Dy()
+
+	// 3. Вписываем изображение в сетку основы (по центру)
 	fitW, fitH, indexGrid := MakeFitIndexGrid(srcW, srcH, userGridW, userGridH)
 
-	// 2. Масштабирование
-	//resized := imaging.Resize(src, gridW, gridH, imaging.CatmullRom)
+	// 3. Масштабирование
 	resized := imaging.Resize(src, fitW, fitH, imaging.CatmullRom)
 
-	// 3. Фильтр
+	// 4. Фильтрация
 	filtered := MedianFilter(resized, 3)
 
-	// 4. Подбор ближайших цветов
+	// 5. Подбираем ближайшие цвета для каждого пикселя
 	matched := MatchToPalette(filtered, palette, indexGrid)
 
+	// 6. Назначаем символы цветам
 	AssignSymbolsToMatched(matched, allSymbols)
 
-	// 5. Построение растрового холста и подсчёт цветов
+	// 7. Генерируем картинку, считаем использование цветов
 	const cellSize = 10
-	// Удаляем редкие цвета:
 	_, usages := RenderMosaic(matched, cellSize)
-	// Удаляем редкие цвета:
 	RemoveRareColors(matched, usages, 30) // удаляем редкие цвета
-	// Повторно пересчитываем usages и картинку:
-	mosaic, usages := RenderMosaic(matched, cellSize)
+	mosaic, usages := RenderMosaic(matched, cellSize) 	// пересчитываем usages и картинку
 
+	// 8. Конвертируем изображение в RGBA
 	rgbaImg, ok := mosaic.(*image.RGBA)
 	if !ok {
-		// если вдруг другой тип, то сконвертируй:
 		bounds := mosaic.Bounds()
 		tmp := image.NewRGBA(bounds)
 		draw.Draw(tmp, bounds, mosaic, bounds.Min, draw.Src)
 		rgbaImg = tmp
 	}
 
-	// нанести символы
+	// 9. Наносим символы на изображение
 	err = DrawSymbolsOnImage(rgbaImg, matched, cellSize, "fonts/DejaVuSans.ttf")
 	if err != nil {
 		log.Printf("ошибка нанесения символов: %v", err)
 	}
 
+	// 10. Формируем структуру с информацией о размерах
 	sizeInfo := CalcMosaicSizeInfo(
 		widthCm, heightCm, // пользовательские размеры
 		userGridW, userGridH, // вся сетка основы
@@ -107,13 +106,14 @@ func Process(file io.Reader, palette []db.PaletteColor, widthCm int, heightCm in
 	return mosaic, usages, sizeInfo, nil
 }
 
-// mosaicParams.go или прямо в нужном файле
+// CalcMosaicSizeInfo рассчитывает структуру с параметрами размеров мозаики и вписанного изображения.
 func CalcMosaicSizeInfo(
 	baseWcm, baseHcm int, // заданные пользователем см
 	gridW, gridH int, // сетка основы (в алмазиках)
 	imgFitW, imgFitH int, // размеры вписанного изображения в алмазиках
 	cellSizeMM float64, // размер 1 алмаза в мм, например 2.5
 ) MosaicSizeInfo {
+
 	// Переводим из алмазиков в сантиметры:
 	imgWcm := int(float64(imgFitW) * cellSizeMM / 10.0)
 	imgHcm := int(float64(imgFitH) * cellSizeMM / 10.0)
@@ -130,7 +130,7 @@ func CalcMosaicSizeInfo(
 	}
 }
 
-// MatchToPalette строит матрицу подобранных цветов
+// MatchToPalette подбирает к каждому пикселю (ячейке) ближайший цвет из палитры DMC.
 func MatchToPalette(src image.Image, palette []db.PaletteColor, indexGrid [][][2]int) [][]db.PaletteColor {
 	start := time.Now() // замер времени выполнения
 
@@ -171,7 +171,8 @@ func MatchToPalette(src image.Image, palette []db.PaletteColor, indexGrid [][][2
 	return matched
 }
 
-// Возвращает матрицу [userGridH][userGridW] с координатами пикселя в resized или (-1, -1) для пустых
+// MakeFitIndexGrid рассчитывает размеры вписанной области (в клетках) с сохранением пропорций
+// и возвращает размеры и индексы соответствия ячеек пикселям исходника.
 func MakeFitIndexGrid(srcW, srcH, userGridW, userGridH int) (fitW, fitH int, pixelIndex [][][2]int) {
 	fitW, fitH, offsetX, offsetY := ComputeFitArea(srcW, srcH, userGridW, userGridH)
 	pixelIndex = make([][][2]int, userGridH)
@@ -190,7 +191,7 @@ func MakeFitIndexGrid(srcW, srcH, userGridW, userGridH int) (fitW, fitH int, pix
 	return fitW, fitH, pixelIndex
 }
 
-// findNearestColor ищет ближайший цвет в палитре по евклидову дистанции в Lab.
+// findNearestColor ищет ближайший цвет в палитре по евклидовой дистанции в Lab.
 func findNearestColor(c colorful.Color, palette []db.PaletteColor) db.PaletteColor {
 	l1, a1, b1 := c.Lab()
 	lab1 := [3]float64{l1, a1, b1}
@@ -208,6 +209,7 @@ func findNearestColor(c colorful.Color, palette []db.PaletteColor) db.PaletteCol
 	return nearest
 }
 
+// euclideanDistanceLab вычисляет квадрат евклидова расстояния между двумя цветами в пространстве Lab.
 func euclideanDistanceLab(lab1, lab2 [3]float64) float64 {
 	dL := lab1[0] - lab2[0]
 	da := lab1[1] - lab2[1]
@@ -242,14 +244,12 @@ func RenderMosaic(matched [][]db.PaletteColor, cellSize int) (image.Image, []Col
 				nr, ng, nb := pc.Color.RGB255()
 				rect := image.Rect(x*cellSize, y*cellSize, (x+1)*cellSize, (y+1)*cellSize)
 				draw.Draw(mosaic, rect, &image.Uniform{C: color.RGBA{R: nr, G: ng, B: nb, A: 255}}, image.Point{}, draw.Src)
-				//drawBorder(mosaic, rect, color.Black)
 				drawBorder(mosaic, rect, color.RGBA{R: 90, G: 90, B: 90, A: 255})
 			}
 		}(y)
 
 		wg.Wait()
 	}
-	// В срез
 	usages := make([]ColorUsage, 0, len(usageMap))
 	for _, u := range usageMap {
 		usages = append(usages, u)
@@ -260,15 +260,14 @@ func RenderMosaic(matched [][]db.PaletteColor, cellSize int) (image.Image, []Col
 	return mosaic, usages
 }
 
-// Функция: заменить редкие цвета на ближайший частый
+// RemoveRareColors заменяет редкие цвета на ближайшие частые.
 func RemoveRareColors(matched [][]db.PaletteColor, usages []ColorUsage, minCount int) {
-	// 1. Собрать частые и редкие цвета
+	// 1. Собираем частые и редкие цвета
 	majorColors := map[string]db.PaletteColor{} // частые цвета
 	minorColors := map[string]db.PaletteColor{} // редкие цвета
-	// поиск цветов
 	for _, u := range usages {
 		if u.PaletteColor.DMCCode == "BLANK" {
-			continue // игнорируем BLANK полностью
+			continue // игнорируем BLANK
 		}
 		if u.Count >= minCount {
 			majorColors[u.PaletteColor.DMCCode] = u.PaletteColor
@@ -276,16 +275,12 @@ func RemoveRareColors(matched [][]db.PaletteColor, usages []ColorUsage, minCount
 			minorColors[u.PaletteColor.DMCCode] = u.PaletteColor
 		}
 	}
-
-	// 2. Если вдруг нет частых цветов, просто ничего не делаем
 	if len(majorColors) == 0 {
 
 		return
 	}
 
-	// 3. Поиск для каждого редкого цвета ближайший из частых
-
-	// Функция поиска ближайшего основного цвета
+	// 2. Для каждого редкого цвета ищем ближайший частый
 	findNearestMajor := func(c colorful.Color) db.PaletteColor {
 		l1, a1, b1 := c.Lab()
 		minDist := 1e9
@@ -318,7 +313,7 @@ func RemoveRareColors(matched [][]db.PaletteColor, usages []ColorUsage, minCount
 	}
 }
 
-// MedianFilter применяет медианный фильтр к изображению с ядром kernelSize (должно быть нечётным).
+// MedianFilter применяет медианный фильтр к изображению с ядром kernelSize.
 func MedianFilter(img image.Image, kernelSize int) image.Image {
 	start := time.Now() // замер времени выполнения
 	var wg sync.WaitGroup
@@ -361,7 +356,7 @@ func MedianFilter(img image.Image, kernelSize int) image.Image {
 	return filtered
 }
 
-// median вычисляет медиану из среза значений uint8.
+// median возвращает медиану из среза uint8.
 func median(data []uint8) uint8 {
 	n := len(data)
 	// Простейшая сортировка
@@ -375,7 +370,7 @@ func median(data []uint8) uint8 {
 	return data[n/2]
 }
 
-// Нарисовать символы на мозаике
+// DrawSymbolsOnImage наносит символы на итоговое изображение-мозаику.
 func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize int, fontPath string) error {
 	fontBytes, err := ioutil.ReadFile(fontPath)
 	if err != nil {
@@ -392,7 +387,7 @@ func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize i
 	c.SetClip(img.Bounds())
 	c.SetDst(img)
 
-	const brightnessThreshold = 0.5 // Порог, подбирай по вкусу
+	const brightnessThreshold = 0.5 // порог
 
 	for y := 0; y < len(matched); y++ {
 		for x := 0; x < len(matched[0]); x++ {
@@ -417,8 +412,7 @@ func DrawSymbolsOnImage(img *image.RGBA, matched [][]db.PaletteColor, cellSize i
 	return nil
 }
 
-// Функция определяет, какой цвет текста выбрать (черный или белый)
-// col — цвет фона, threshold — порог яркости (обычно 70)
+// chooseSymbolColor возвращает чёрный или белый цвет для символа по яркости фона.
 func chooseSymbolColor(col colorful.Color, threshold float64) image.Image {
 	l, _, _ := col.Lab()
 	if l > threshold {
@@ -427,6 +421,7 @@ func chooseSymbolColor(col colorful.Color, threshold float64) image.Image {
 	return image.White
 }
 
+// AssignSymbolsToMatched назначает каждому цвету уникальный символ.
 func AssignSymbolsToMatched(matched [][]db.PaletteColor, allSymbols []string) {
 	symbolMap := map[string]string{} // DMC -> символ
 	symbolIdx := 0
@@ -451,6 +446,7 @@ func AssignSymbolsToMatched(matched [][]db.PaletteColor, allSymbols []string) {
 	}
 }
 
+// drawBorder рисует рамку вокруг одной клетки мозаики.
 func drawBorder(img *image.RGBA, rect image.Rectangle, c color.Color) {
 	minX, minY, maxX, maxY := rect.Min.X, rect.Min.Y, rect.Max.X, rect.Max.Y
 
@@ -466,8 +462,7 @@ func drawBorder(img *image.RGBA, rect image.Rectangle, c color.Color) {
 	}
 }
 
-// Вычисляет размеры вписанной области (в клетках) с сохранением пропорций
-// и возвращает gridFitW, gridFitH, offsetX, offsetY для вставки по центру
+// ComputeFitArea вычисляет размеры вписанной области (в клетках) с сохранением пропорций
 func ComputeFitArea(srcW, srcH, userGridW, userGridH int) (fitW, fitH, offsetX, offsetY int) {
 	srcRatio := float64(srcW) / float64(srcH)
 	userRatio := float64(userGridW) / float64(userGridH)

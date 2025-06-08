@@ -11,15 +11,15 @@ import (
 	"github.com/jung-kurt/gofpdf"
 )
 
-// GeneratePDF генерирует PDF файл с мозаикой и легендой.
-// Принимает на вход картинку-мозаику и список использованных цветов.
+// GeneratePDF формирует PDF-файл с мозаикой и легендой.
 func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage, sizeInfo imagepkg.MosaicSizeInfo) ([]byte, error) {
+	// 1. Кодируем картинку-мозаику в PNG-буфер
 	var imgBuf bytes.Buffer
 	if err := png.Encode(&imgBuf, mosaicImg); err != nil {
 		return nil, fmt.Errorf("ошибка кодирования PNG: %v", err)
 	}
 
-	// Константы расположения
+	// 2. Описываем параметры разметки PDF (можно вынести в структуру PDFLayout)
 	const (
 		pageMarginTop   = 15.0 // мм от верха для первой страницы
 		legendMarginTop = 8.0  // между картинкой и легендой
@@ -30,14 +30,15 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage, sizeInfo i
 		marginLeft      = 10.0
 		marginRight     = 10.0
 	)
-
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	pdf.AddPage()
 	pageW, pageH := pdf.GetPageSize()
-	y0 := printMosaicSizes(pdf, sizeInfo, pageW, pageMarginTop)
-	// Вставка изображения (см. твой код)
-	pdf.RegisterImageOptionsReader("mosaic", gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: false}, &imgBuf)
 
+	// 3. Выводим размеры основы и изображения над схемой
+	y0 := printMosaicSizes(pdf, sizeInfo, pageW, pageMarginTop)
+
+	// 4. Регистрируем изображение и вставляем его в PDF
+	pdf.RegisterImageOptionsReader("mosaic", gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: false}, &imgBuf)
 	info := pdf.GetImageInfo("mosaic")
 	imgW, imgH := info.Width(), info.Height()
 	maxW := pageW - marginLeft - marginRight
@@ -47,10 +48,9 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage, sizeInfo i
 	}
 	imgW, imgH = imgW*scale, imgH*scale
 	x0 := (pageW - imgW) / 2
-	// y0 := pageMarginTop
 	pdf.ImageOptions("mosaic", x0, y0, imgW, imgH, false, gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: false}, 0, "")
 
-	// ГОТОВИМ ПЕРЕМЕННЫЕ ДЛЯ ЛЕГЕНДЫ
+	// 5. Готовим переменные для легенды (таблицы цветов)
 	pdf.SetFont("Arial", "", 8)
 	usableW := pageW - marginLeft - marginRight
 	colW := usableW / float64(cols)
@@ -60,7 +60,7 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage, sizeInfo i
 	currentRow := 0
 	startY := y0 + imgH + legendMarginTop
 
-	// Функция начала новой страницы для легенды
+	// 6. Вспомогательная функция для начала новой страницы легенды
 	newPage := func() {
 		pdf.AddPage()
 		pdf.SetFont("Arial", "", 8)
@@ -69,7 +69,7 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage, sizeInfo i
 		startY = pageMarginTop
 	}
 
-	// Рисуем каждую запись легенды
+	// 7. Рисуем каждый элемент легенды (цвет, символ, количество)
 	for _, u := range usages {
 		// не выводим пустые
 		if u.PaletteColor.DMCCode == "BLANK" {
@@ -93,7 +93,6 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage, sizeInfo i
 
 		// === Символ по центру квадратика ===
 		pdf.SetFont("Arial", "B", 10) // жирный шрифт, размер 10
-		//pdf.SetTextColor(0, 0, 0)     // чёрный символ
 		// Определяем яркость цвета фона
 		l, _, _ := u.PaletteColor.Color.Lab()
 		if l > 0.5 {
@@ -137,7 +136,7 @@ func GeneratePDF(mosaicImg image.Image, usages []imagepkg.ColorUsage, sizeInfo i
 	return pdfBuf.Bytes(), nil
 }
 
-// Выводит текст с размерами над изображением
+// printMosaicSizes выводит текст с размерами над изображением
 func printMosaicSizes(pdf *gofpdf.Fpdf, size imagepkg.MosaicSizeInfo, pageW float64, pageMarginTop float64) float64 {
 	pdf.AddUTF8Font("DejaVu", "", "fonts/DejaVuSans.ttf")
 	pdf.SetFont("DejaVu", "", 12)
